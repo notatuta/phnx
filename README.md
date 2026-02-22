@@ -1,8 +1,6 @@
-# phnx - Encryption and Error Correction Tool
+# phnx - Encryption and Error Correction Tool [![C/C++ CI](https://github.com/notatuta/phnx/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/notatuta/phnx/actions/workflows/c-cpp.yml)
 
 phnx combines file encryption with error correction, splitting encrypted files into 8 pieces with built-in redundancy. The original file can be recovered even if one piece is missing, or some pieces are corrupted.
-
-[![C/C++ CI](https://github.com/notatuta/phnx/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/notatuta/phnx/actions/workflows/c-cpp.yml)
 
 ## Features
 
