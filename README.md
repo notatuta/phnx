@@ -2,6 +2,8 @@
 
 phnx combines file encryption with error correction, splitting encrypted files into 8 pieces with built-in redundancy. The original file can be recovered even if one piece is missing, or some pieces are corrupted.
 
+![Build Status](https://github.com/notatuta/phnx/workflows/.github/workflows/c-cpp.yml/badge.svg)
+
 ## Features
 
 - **Strong Encryption**: Speck128/256 cipher in CTR mode
