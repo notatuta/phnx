@@ -397,14 +397,7 @@ process_one_file(const char* filename, const uint64_t schedule[34], bool compati
   bool golay_encode = !compatibility_mode;
   bool golay_decode = false;
   std::fstream f;
-  std::streamsize buffer_size = 1024 * 1024;
-  auto buffer = std::make_unique<char[]>(buffer_size);
-  f.rdbuf()->pubsetbuf(buffer.get(), buffer_size);
   std::fstream slices[8];
-  std::unique_ptr<char[]> slices_buffer[8];
-  for (int i = 0; i < 8; i++) {
-    slices_buffer[i] = std::make_unique<char[]>(buffer_size);
-  }
   long length = 0;
   long remaining_length = 0;
   GolayCode gc;
