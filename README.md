@@ -2,7 +2,7 @@
 
 phnx combines file encryption with error correction, splitting encrypted files into 8 pieces with built-in redundancy. The original file can be recovered even if one piece is missing, or some pieces are corrupted.
 
-![Build Status](https://github.com/notatuta/phnx/workflows/.github/workflows/c-cpp.yml/badge.svg)
+[![C/C++ CI](https://github.com/notatuta/phnx/actions/workflows/c-cpp.yml/badge.svg)](https://github.com/notatuta/phnx/actions/workflows/c-cpp.yml)
 
 ## Features
 
