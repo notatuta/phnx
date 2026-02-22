@@ -45,6 +45,7 @@
 #include <ctype.h>
 #include <fstream> 
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <sys/types.h>
 #include <unistd.h>
@@ -53,7 +54,7 @@
 #include <random>
 #include <inttypes.h>
 
-#define PHNX_VERSION "4.01"
+#define PHNX_VERSION "4.0.2"
 
 enum PHNX_ERROR_CODE {
   PHNX_OK = 0,
@@ -241,24 +242,33 @@ bytes_to_uint64(const uint8_t bytes[], unsigned length)
   return w;
 }
 
+union EightTriplets {
+  uint8_t bytes[8][3];
+  uint64_t qwords[3];  
+};
+
 // Can write to buffer past bytes_to_read to include the complete last 12 byte word 
 static int golay_read_and_decode(uint8_t* buffer, size_t bytes_to_read, std::fstream slices[8], GolayCode& gc)
 {
-  for (size_t block_offset = 0; block_offset < bytes_to_read; block_offset += 12) {
-    union {
-      uint8_t bytes[8][3];
-      uint64_t qwords[3];  
-    } eighttriplets = {}; // Bytes not read set to zero
-
-    // Read 3 bytes from each available slice
-    for (int i = 0; i < 8; i++) {
-      if (slices[i].is_open()) {
-        slices[i].read((char*)(&eighttriplets.bytes[i][0]), 3);
-        if (!slices[i]) {
-          std::cerr << "\nError reading from slice " << (char)('A' + i) << "\n";
-          return PHNX_IO_ERROR;
-        }
+  // Read from each available slice
+  auto bytes_to_read_from_each_chunk = (bytes_to_read + 3) / 4; // Round up for partial
+  std::unique_ptr<char[]> slice_chunks[8];
+  for (int i = 0; i < 8; i++) {
+    slice_chunks[i] = std::make_unique<char[]>(bytes_to_read_from_each_chunk); // Bytes not read set to zero
+    if (slices[i].is_open()) {
+      slices[i].read(slice_chunks[i].get(), bytes_to_read_from_each_chunk);
+      if (!slices[i]) {
+        std::cerr << "\nError reading from slice " << (char)('A' + i) << "\n";
+        return PHNX_IO_ERROR;
       }
+    }
+  }
+
+  for (size_t block_offset = 0; block_offset < bytes_to_read; block_offset += 12) {
+    // Copy 3 bytes from each slice
+    EightTriplets eighttriplets = {};
+    for (int i = 0; i < 8; i++) {
+      memcpy(&eighttriplets.bytes[i][0], slice_chunks[i].get() + block_offset / 4, 3);
     }
 
     // Reconstruct via Golay decode
@@ -305,6 +315,12 @@ static int golay_read_and_decode(uint8_t* buffer, size_t bytes_to_read, std::fst
 
 static int golay_encode_and_write(const uint8_t* data, size_t data_size, std::fstream slices[8], GolayCode& gc)
 {
+  const auto bytes_to_write_to_each_chunk = (data_size + 3) / 4; // Round up for partial
+  std::unique_ptr<char[]> slice_chunks[8];
+  for (int i = 0; i < 8; i++) {
+    slice_chunks[i] = std::make_unique<char[]>(bytes_to_write_to_each_chunk);
+  }
+
   for (size_t block_offset = 0; block_offset < data_size; block_offset += 12) {
 
     // Pad with zeroes
@@ -316,10 +332,7 @@ static int golay_encode_and_write(const uint8_t* data, size_t data_size, std::fs
     memcpy(&twelvebytes.bytes[0], data + block_offset, copy_size);
 
     // Rearrange into eight slices, each three byte long
-    union {
-      uint8_t bytes[8][3];
-      uint64_t qwords[3];  
-    } eighttriplets = {};
+    EightTriplets eighttriplets = {};
     for (int i = 0; i < 8; i++) {
       #if defined(__BMI2__)
         const uint64_t mask = 0x0101010101010101ULL << i;
@@ -351,13 +364,18 @@ static int golay_encode_and_write(const uint8_t* data, size_t data_size, std::fs
       #endif
     }
 
-    // Write each slice
+    // Copy 3 bytes to each slice
     for (int i = 0; i < 8; i++) {
-      slices[i].write((char*)(&eighttriplets.bytes[i]), 3);
-      if (!slices[i]) {
-        std::cerr << "\nError writing slice" << ('A' + i) << "\n";
-        return PHNX_IO_ERROR;
-      }
+      memcpy(slice_chunks[i].get() + block_offset / 4, &eighttriplets.bytes[i][0], 3);
+    }
+  }
+
+  // Write all slices
+  for (int i = 0; i < 8; i++) {
+    slices[i].write(slice_chunks[i].get(), bytes_to_write_to_each_chunk);
+    if (!slices[i]) {
+      std::cerr << "\nError writing slice" << ('A' + i) << "\n";
+      return PHNX_IO_ERROR;
     }
   }
   return PHNX_OK;
@@ -378,8 +396,15 @@ process_one_file(const char* filename, const uint64_t schedule[34], bool compati
   uint64_t nonce = 0;
   bool golay_encode = !compatibility_mode;
   bool golay_decode = false;
-  std::fstream slices[8];
   std::fstream f;
+  std::streamsize buffer_size = 1024 * 1024;
+  auto buffer = std::make_unique<char[]>(buffer_size);
+  f.rdbuf()->pubsetbuf(buffer.get(), buffer_size);
+  std::fstream slices[8];
+  std::unique_ptr<char[]> slices_buffer[8];
+  for (int i = 0; i < 8; i++) {
+    slices_buffer[i] = std::make_unique<char[]>(buffer_size);
+  }
   long length = 0;
   long remaining_length = 0;
   GolayCode gc;
@@ -880,12 +905,15 @@ int main(int argc, char** argv)
           decoded_wrong_ct[j]++;
         }
         if ((unsigned)z != x && j < 4) {
-          printf("GolayCode self-test failed\nOriginal:    0x%03x\nTransmitted: 0x%06x\nError bits:  0x%06x\nReceived:    0x%06x\n", 
-            x, y, errors, y ^ errors);
+          std::cerr << "GolayCode self-test failed\n"
+                    << "Original:    0x" << std::hex << x << "\n"
+                    << "Transmitted: 0x" << y  << "\n"
+                    << "Error bits:  0x" << errors  << "\n"
+                    << "Received:    0x" << (y ^ errors) << std::dec << "\n"; 
           if (z < 0) {
-            printf("Nothing decoded\n");
+            std::cerr << "Nothing decoded\n";
           } else {
-            printf("Decoded:     0x%03x\n", z);
+            std::cerr << "Decoded:     0x" << std::hex << z << std::dec << "\n";
           }
           return PHNX_SELF_TEST_FAILED;
         }
